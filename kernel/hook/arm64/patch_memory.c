@@ -137,6 +137,8 @@ static int ksu_patch_text_nosync(void *dst, void *src, size_t len, int flags)
     void *map = set_fixmap_offset(FIX_TEXT_POKE0, phy);
 
     ret = (int)copy_to_kernel_nofault(map, src, len);
+    if (ret)
+        pr_err("patch_memory: write failed ret=%d dst=%px alias=%px phys=%lx len=%zu\n", ret, dst, map, phy, len);
 
     clear_fixmap(FIX_TEXT_POKE0);
 
@@ -177,13 +179,17 @@ static int ksu_patch_text_cb(void *arg)
 int ksu_patch_text(void *dst, void *src, size_t len, int flags)
 {
     int ret;
-    struct patch_text_info info = {
-        .dst = dst,
-        .src = src,
-        .len = len,
-        .cpu_count = ATOMIC_INIT(0),
-        .flags = flags,
-    };
+    struct patch_text_info info;
+
+    // One fixmap slot covers one page; refuse writes that would cross into the next page
+    if (!dst || !src || !len || (((unsigned long)dst & ~PAGE_MASK) + len) > PAGE_SIZE)
+        return -EINVAL;
+
+    info.dst = dst;
+    info.src = src;
+    info.len = len;
+    atomic_set(&info.cpu_count, 0);
+    info.flags = flags;
 
     ret = stop_machine(ksu_patch_text_cb, &info, cpu_online_mask);
     if (ret)
