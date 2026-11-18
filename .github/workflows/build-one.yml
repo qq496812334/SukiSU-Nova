@@ -1,0 +1,54 @@
+name: Build LKM (single KMI)
+
+# Self-contained on purpose: upstream's ddk-lkm.yml is now a self-hosted-runner
+# variant (private git mirror + /ci volumes), so calling it breaks on
+# GitHub-hosted runners. Everything needed is inlined here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      kmi:
+        description: 'KMI to build (e.g. android17-6.18)'
+        required: false
+        default: 'android17-6.18'
+        type: string
+      ddk_release:
+        description: 'DDK release tag'
+        required: false
+        default: '20260828'
+        type: string
+
+jobs:
+  build:
+    name: Build kernelsu.ko for ${{ inputs.kmi }}
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ylarod/ddk-min:${{ inputs.kmi }}-${{ inputs.ddk_release }}
+      options: --privileged
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Build kernelsu.ko
+        env:
+          KMI: ${{ inputs.kmi }}
+        run: |
+          set -eux
+          git config --global --add safe.directory '*'
+          cd kernel
+
+          echo "=== Building kernelsu.ko for KMI: ${KMI} ==="
+          CONFIG_KSU=m CONFIG_KPM=y CC=clang make
+
+          mkdir -p out
+          cp kernelsu.ko "out/${KMI}_kernelsu.ko"
+          llvm-strip -d "out/${KMI}_kernelsu.ko"
+          ls -l "out/${KMI}_kernelsu.ko"
+          file "out/${KMI}_kernelsu.ko" || true
+
+      - name: Upload kernelsu.ko artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: aarch64-${{ inputs.kmi }}-lkm
+          path: kernel/out/*_kernelsu.ko
